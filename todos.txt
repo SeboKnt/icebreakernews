@@ -27,3 +27,4 @@
 - Debug-Tools erstellt: session_debug.php und quick_test.php  
 - Session-Verzeichnis durch .htaccess geschützt
 - Erweiterte Debug-Ausgaben in admin.php
+

@@ -28,7 +28,7 @@ try {
     // Check if articles table exists
     $stmt = $pdo->query("SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'articles'");
     if ($stmt->fetchColumn() == 0) {
-        die('Error: Articles table not found. Please run <a href="/install_db.php">install_db.php</a> first.');
+        die('Error: Articles table not found. Please run <a href="/setup_db.php">setup_db.php</a> first.');
     }
     
     // Load articles
