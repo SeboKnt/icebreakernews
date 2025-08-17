@@ -1,13 +1,20 @@
 <?php
 // IcebreakerNews Configuration
+
+// Lade sichere Konfiguration aus .env.php
+$env = [];
+if (file_exists(__DIR__ . '/.env.php')) {
+    $env = require __DIR__ . '/.env.php';
+}
+
 return [
     'db' => [
-        'host' => 'j3vm.your-database.de',
-        'port' => 5432,
-        'dbname' => 'youngau_db1',
-        'user' => 'youngau_1',
-        'password' => 'W3LHLZc8E7xGev71',
-        'sslmode' => 'verify-full',
+        'host' => $env['DB_HOST'] ?? 'localhost',
+        'port' => (int)($env['DB_PORT'] ?? 5432),
+        'dbname' => $env['DB_NAME'] ?? 'icebreaker_news',
+        'user' => $env['DB_USER'] ?? 'root',
+        'password' => $env['DB_PASS'] ?? '',
+        'sslmode' => $env['DB_SSLMODE'] ?? 'prefer',
         'sslrootcert' => __DIR__ . '/sqlca.pem',
     ],
     'site' => [

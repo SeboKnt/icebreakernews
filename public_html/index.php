@@ -32,7 +32,7 @@ try {
     }
     
     // Load articles
-    $stmt = $pdo->prepare('SELECT id, title, summary, author, published_at FROM articles WHERE published_at <= NOW() ORDER BY published_at DESC LIMIT 10');
+    $stmt = $pdo->prepare('SELECT id, title, summary, author, image_url, published_at FROM articles WHERE published_at <= NOW() ORDER BY published_at DESC LIMIT 10');
     $stmt->execute();
     $articles = $stmt->fetchAll();
     
@@ -185,26 +185,63 @@ try {
             font-weight: 400;
         }
         
+        .top-story-image {
+            margin-bottom: 25px;
+            border-radius: 15px;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        }
+        
+        .top-story-image img {
+            width: 100%;
+            height: 300px;
+            object-fit: cover;
+            display: block;
+        }
+        
         /* Articles Grid */
         .articles-grid { 
             display: grid; 
             grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); 
-            gap: 30px;
+            gap: 25px;
+            margin-top: 40px;
         }
         
         .article-card { 
             background: white;
-            border-radius: 15px;
-            padding: 30px;
-            transition: all 0.3s ease;
-            box-shadow: 0 5px 20px rgba(0,0,0,0.08);
+            border-radius: 20px;
+            padding: 0;
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 0 4px 25px rgba(0,0,0,0.08);
             position: relative;
+            overflow: hidden;
+            border: 1px solid rgba(0,0,0,0.06);
+        }
+        
+        .article-image {
+            width: 100%;
+            height: 200px;
             overflow: hidden;
         }
         
+        .article-image img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transition: transform 0.4s ease;
+        }
+        
+        .article-card:hover .article-image img {
+            transform: scale(1.05);
+        }
+        
+        .article-content {
+            padding: 25px;
+        }
+        
         .article-card:hover {
-            transform: translateY(-8px);
-            box-shadow: 0 15px 40px rgba(0,0,0,0.15);
+            transform: translateY(-5px) scale(1.02);
+            box-shadow: 0 20px 60px rgba(0,0,0,0.15);
         }
         
         .article-card::before {
@@ -213,14 +250,21 @@ try {
             top: 0;
             left: 0;
             right: 0;
-            height: 3px;
-            background: linear-gradient(90deg, #ff7e5f, #feb47b);
+            height: 4px;
+            background: linear-gradient(135deg, #667eea, #764ba2, #ff7e5f, #feb47b);
+            background-size: 300% 300%;
+            animation: gradientMove 6s ease infinite;
             transform: scaleX(0);
-            transition: transform 0.3s ease;
+            transition: transform 0.4s ease;
         }
         
         .article-card:hover::before {
             transform: scaleX(1);
+        }
+        
+        @keyframes gradientMove {
+            0%, 100% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
         }
         
         .article-card h2 { 
@@ -373,7 +417,6 @@ try {
                 <a href="/" class="logo"><?= h($config['site']['title']) ?></a>
                 <nav class="nav">
                     <a href="/">Startseite</a>
-                    <a href="/admin.php">Admin</a>
                 </nav>
             </div>
         </div>
@@ -382,6 +425,11 @@ try {
     <main class="container">
         <?php if ($topStory): ?>
         <article class="top-story">
+            <?php if ($topStory['image_url']): ?>
+            <div class="top-story-image">
+                <img src="<?= h($topStory['image_url']) ?>" alt="<?= h($topStory['title']) ?>">
+            </div>
+            <?php endif; ?>
             <h1><a href="/article.php?id=<?= $topStory['id'] ?>" style="color: inherit; text-decoration: none;"><?= h($topStory['title']) ?></a></h1>
             <div class="meta">
                 <?= formatDate($topStory['published_at']) ?>
@@ -395,12 +443,19 @@ try {
         <div class="articles-grid">
             <?php foreach ($otherArticles as $article): ?>
             <article class="article-card">
-                <h2><a href="/article.php?id=<?= $article['id'] ?>"><?= h($article['title']) ?></a></h2>
-                <div class="meta">
-                    <?= formatDate($article['published_at']) ?>
-                    <?php if ($article['author']): ?> | <?= h($article['author']) ?><?php endif; ?>
+                <?php if ($article['image_url']): ?>
+                <div class="article-image">
+                    <img src="<?= h($article['image_url']) ?>" alt="<?= h($article['title']) ?>">
                 </div>
-                <div class="summary"><?= h($article['summary']) ?></div>
+                <?php endif; ?>
+                <div class="article-content">
+                    <h2><a href="/article.php?id=<?= $article['id'] ?>"><?= h($article['title']) ?></a></h2>
+                    <div class="meta">
+                        <?= formatDate($article['published_at']) ?>
+                        <?php if ($article['author']): ?> | <?= h($article['author']) ?><?php endif; ?>
+                    </div>
+                    <div class="summary"><?= h($article['summary']) ?></div>
+                </div>
             </article>
             <?php endforeach; ?>
         </div>
@@ -409,14 +464,14 @@ try {
         <?php if (empty($articles)): ?>
         <div class="empty-state">
             <h2>Noch keine Artikel verfügbar</h2>
-            <p>Besuchen Sie den <a href="/admin.php">Admin-Bereich</a>, um Artikel zu erstellen.</p>
+            <p>Kommen Sie später wieder für aktuelle Nachrichten.</p>
         </div>
         <?php endif; ?>
     </main>
 
     <footer>
         <div class="container">
-            <p>&copy; <?= date('Y') ?> <?= h($config['site']['title']) ?> | Alle Rechte vorbehalten</p>
+            <p>&copy; <?= date('Y') ?> <?= h($config['site']['title']) ?> | Alle Rechte vorbehalten | <a href="/admin.php" style="color: #7f8c8d; text-decoration: none; font-size: 12px;">Admin</a></p>
         </div>
     </footer>
 </body>

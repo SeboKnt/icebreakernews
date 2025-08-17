@@ -1,0 +1,39 @@
+# Minimale .htaccess für Hetzner (Server Error Fix)
+# Alle problematischen Session-Einstellungen entfernt
+
+# Basis PHP Einstellungen
+php_value max_execution_time 300
+php_value memory_limit 256M
+
+# Error Pages
+ErrorDocument 404 /404.php
+ErrorDocument 500 /error.php?code=500&message=Interner%20Serverfehler
+
+# Protect sensitive files
+<Files ".env.php">
+    Order allow,deny
+    Deny from all
+</Files>
+
+<Files ".env">
+    Order allow,deny
+    Deny from all
+</Files>
+
+<Files "*.sql">
+    Order allow,deny
+    Deny from all
+</Files>
+
+# Security Headers
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options nosniff
+    Header always set X-Frame-Options DENY
+</IfModule>
+
+# Gzip Compression
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE text/html
+    AddOutputFilterByType DEFLATE text/css
+    AddOutputFilterByType DEFLATE application/javascript
+</IfModule>

@@ -1,0 +1,38 @@
+# Backup der aktuellen .htaccess
+# Falls die neue .htaccess Probleme macht, diese verwenden
+
+# Minimale .htaccess für Hetzner Webhosting (Server Error Fix)
+
+# Basis PHP Einstellungen (sicher für die meisten Server)
+php_value max_execution_time 300
+php_value memory_limit 256M
+
+# Error Pages
+ErrorDocument 404 /404.php
+ErrorDocument 500 /error.php?code=500&message=Interner%20Serverfehler
+
+# Protect sensitive files
+<Files ".env.php">
+    Order allow,deny
+    Deny from all
+</Files>
+
+<Files ".env">
+    Order allow,deny
+    Deny from all
+</Files>
+
+<Files "*.sql">
+    Order allow,deny
+    Deny from all
+</Files>
+
+# Security Headers (Basic)
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options nosniff
+</IfModule>
+
+# Gzip Compression (Basic)
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE text/html text/css application/javascript
+</IfModule>

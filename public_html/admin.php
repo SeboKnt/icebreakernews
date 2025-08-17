@@ -1,44 +1,39 @@
 <?php
-// Session-Konfiguration und -Start
-ini_set('session.save_handler', 'files');
-ini_set('session.save_path', sys_get_temp_dir());
-ini_set('session.cookie_httponly', 1);
-ini_set('session.use_only_cookies', 1);
-ini_set('session.cookie_secure', 0); // Für HTTP (nicht HTTPS)
-ini_set('session.gc_maxlifetime', 3600);
-ini_set('session.cookie_lifetime', 0);
+// Robustes Session-Management für Hetzner
+$session_path = __DIR__ . '/sessions';
+if (!is_dir($session_path)) {
+    mkdir($session_path, 0755, true);
+}
 
-// Session starten mit Fehlerbehandlung
-if (session_status() === PHP_SESSION_NONE) {
-    if (!session_start()) {
-        // Fallback: Cookie-basierte "Session"
-        $session_disabled = true;
-    }
+// Mehrere Session-Strategien
+$session_started = false;
+
+// Strategie 1: Lokaler Session-Pfad
+if (is_writable($session_path)) {
+    session_save_path($session_path);
+    session_start();
+    $session_started = true;
+} else {
+    // Strategie 2: Standard Session
+    session_start();
+    $session_started = true;
 }
 
 require_once 'functions.php';
+
+// Session-Verzeichnis sicherstellen
+if (!ensureSessionDirectory()) {
+    die('Error: Session directory not writable. Please check permissions.');
+}
+
 $pdo = require 'db.php';
 $config = require 'config.php';
 
+// Sichere Konfiguration laden
+$env_config = file_exists('.env.php') ? require '.env.php' : [];
+
 // Debug Mode aktivieren
 $debug_mode = isset($_GET['debug']);
-
-// Cookie-basierte Fallback-Funktion für kaputte Sessions
-function setAdminCookie($value = true) {
-    setcookie('admin_auth', $value ? 'authenticated_' . time() : '', time() + 3600, '/', '', false, true);
-}
-
-function isAdminByCookie() {
-    return isset($_COOKIE['admin_auth']) && strpos($_COOKIE['admin_auth'], 'authenticated_') === 0;
-}
-
-function isAdminFallback() {
-    global $session_disabled;
-    if ($session_disabled) {
-        return isAdminByCookie();
-    }
-    return isset($_SESSION['admin']) && $_SESSION['admin'] === true;
-}
 
 // Login verarbeiten
 if (isset($_POST['login'])) {
@@ -46,34 +41,24 @@ if (isset($_POST['login'])) {
     
     if ($debug_mode) {
         error_log("Login attempt with password: " . $password);
-        error_log("Expected password: admin123");
     }
     
-    if ($password === 'admin123') {  // Einfaches Passwort
-        if (!isset($session_disabled)) {
-            $_SESSION['admin'] = true;
-            $_SESSION['login_time'] = time();
-        }
-        
-        // Cookie-Fallback setzen
-        setAdminCookie(true);
+    // Sicherer Passwort-Check mit Hash
+    $password_hash = $env_config['ADMIN_PASSWORD_HASH'] ?? '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi';
+    
+    if (password_verify($password, $password_hash)) {
+        $_SESSION['admin'] = true;
+        $_SESSION['login_time'] = time();
         
         if ($debug_mode) {
             error_log("Login successful, session set");
-            error_log("Session data: " . print_r($_SESSION ?? [], true));
         }
         
-        // Force session write wenn verfügbar
-        if (!isset($session_disabled)) {
-            session_write_close();
-            session_start();
-        }
-        
-        // Redirect nach erfolgreichem Login - relativer Pfad ohne führenden Slash
+        // Redirect nach erfolgreichem Login
         header('Location: admin.php');
         exit();
     } else {
-        $error = 'Falsches Passwort - Verwenden Sie: admin123';
+        $error = 'Falsches Passwort';
         if ($debug_mode) {
             error_log("Login failed: " . $error);
         }
@@ -83,29 +68,56 @@ if (isset($_POST['login'])) {
 // Debug Info für Entwicklung
 $debug_info = '';
 if ($debug_mode) {
-    $debug_info = "<strong>Debug Info:</strong><br>";
-    $debug_info .= "Session ID: " . session_id() . "<br>";
-    $debug_info .= "Session Status: " . session_status() . " (1=disabled, 2=active)<br>";
-    $debug_info .= "Session Disabled: " . (isset($session_disabled) ? 'YES' : 'NO') . "<br>";
-    $debug_info .= "Admin Session: " . (isset($_SESSION['admin']) ? 'SET (' . $_SESSION['admin'] . ')' : 'NOT SET') . "<br>";
-    $debug_info .= "Admin Cookie: " . (isAdminByCookie() ? 'SET' : 'NOT SET') . "<br>";
-    $debug_info .= "isAdminFallback(): " . (isAdminFallback() ? 'TRUE' : 'FALSE') . "<br>";
+    $session_debug = debugSession();
+    $debug_info = "<strong>Debug Info (Session Fixed):</strong><br>";
+    $debug_info .= "Session ID: " . $session_debug['session_id'] . "<br>";
+    $debug_info .= "Session Status: " . $session_debug['session_status'] . " (1=disabled, 2=active)<br>";
+    $debug_info .= "Session Save Path: " . $session_debug['session_save_path'] . "<br>";
+    $debug_info .= "Session Writable: " . ($session_debug['session_writable'] ? 'YES' : 'NO') . "<br>";
+    $debug_info .= "Admin Session: " . $session_debug['admin_session'] . "<br>";
+    $debug_info .= "isAdmin(): " . (isAdmin() ? 'TRUE' : 'FALSE') . "<br>";
     $debug_info .= "POST data: " . print_r($_POST, true) . "<br>";
-    $debug_info .= "Session Data: " . print_r($_SESSION ?? [], true) . "<br>";
-    $debug_info .= "Cookies: " . print_r($_COOKIE, true) . "<br>";
+    $debug_info .= "Session Data: " . print_r($session_debug['session_data'], true) . "<br>";
 }
 
 // Logout
 if (isset($_GET['logout'])) {
-    if (!isset($session_disabled)) {
-        session_destroy();
-    }
-    setAdminCookie(false); // Cookie löschen
+    session_destroy();
     redirect('admin.php');
 }
 
+// Passwort ändern
+if (isAdmin() && isset($_POST['change_password'])) {
+    $current_password = trim($_POST['current_password'] ?? '');
+    $new_password = trim($_POST['new_password'] ?? '');
+    $confirm_password = trim($_POST['confirm_password'] ?? '');
+    
+    // Aktuelles Passwort validieren
+    $env_config = file_exists('.env.php') ? require '.env.php' : [];
+    $current_hash = $env_config['ADMIN_PASSWORD_HASH'] ?? '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi';
+    
+    if (password_verify($current_password, $current_hash)) {
+        if ($new_password === $confirm_password && strlen($new_password) >= 6) {
+            $new_hash = password_hash($new_password, PASSWORD_DEFAULT);
+            
+            // .env.php aktualisieren
+            $env_content = "<?php\n// Sichere Konfiguration für Produktionsserver\n// Diese Datei sollte außerhalb des public_html Verzeichnisses stehen\n\nreturn [\n    // Admin Login - gehashtes Passwort\n    'ADMIN_PASSWORD_HASH' => '$new_hash',\n    \n    // Datenbank (werden von config.php überschrieben wenn gesetzt)\n    'DB_HOST' => 'localhost',\n    'DB_NAME' => 'icebreaker_news',\n    'DB_USER' => 'root',\n    'DB_PASS' => '',\n];\n?>";
+            
+            if (file_put_contents('.env.php', $env_content)) {
+                $success = 'Passwort erfolgreich geändert!';
+            } else {
+                $error = 'Fehler beim Speichern des neuen Passworts.';
+            }
+        } else {
+            $error = 'Neues Passwort muss mindestens 6 Zeichen lang sein und die Bestätigung muss übereinstimmen.';
+        }
+    } else {
+        $error = 'Aktuelles Passwort ist falsch.';
+    }
+}
+
 // Artikel erstellen/bearbeiten
-if (isAdminFallback() && isset($_POST['save_article'])) {
+if (isAdmin() && isset($_POST['save_article'])) {
     $id = (int)($_POST['id'] ?? 0);
     $title = trim($_POST['title'] ?? '');
     $summary = trim($_POST['summary'] ?? '');
@@ -113,29 +125,56 @@ if (isAdminFallback() && isset($_POST['save_article'])) {
     $author = trim($_POST['author'] ?? '');
     $published = isset($_POST['published']);
     
-    if ($title && $content) {
+    // Bild-Upload verarbeiten
+    $image_url = '';
+    if (isset($_FILES['image']) && $_FILES['image']['error'] === UPLOAD_ERR_OK) {
+        $allowed_types = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+        $file_type = $_FILES['image']['type'];
+        
+        if (in_array($file_type, $allowed_types)) {
+            $file_extension = pathinfo($_FILES['image']['name'], PATHINFO_EXTENSION);
+            $new_filename = 'article_' . time() . '_' . rand(1000, 9999) . '.' . $file_extension;
+            $upload_path = 'uploads/' . $new_filename;
+            
+            if (move_uploaded_file($_FILES['image']['tmp_name'], $upload_path)) {
+                $image_url = $upload_path;
+            } else {
+                $error = 'Fehler beim Hochladen des Bildes';
+            }
+        } else {
+            $error = 'Nur JPEG, PNG, GIF und WebP Bilder sind erlaubt';
+        }
+    } elseif ($id > 0) {
+        // Bei Update: Bestehendes Bild beibehalten wenn kein neues hochgeladen wird
+        $stmt = $pdo->prepare('SELECT image_url FROM articles WHERE id = ?');
+        $stmt->execute([$id]);
+        $existing = $stmt->fetch();
+        $image_url = $existing['image_url'] ?? '';
+    }
+    
+    if ($title && $content && !isset($error)) {
         if ($id > 0) {
             // Update
             $publishedAt = $published ? 'NOW()' : 'NULL';
-            $stmt = $pdo->prepare('UPDATE articles SET title=?, summary=?, content=?, author=?, published_at=COALESCE(?,published_at), updated_at=NOW() WHERE id=?');
-            $stmt->execute([$title, $summary, $content, $author, $published ? date('Y-m-d H:i:s') : null, $id]);
+            $stmt = $pdo->prepare('UPDATE articles SET title=?, summary=?, content=?, author=?, image_url=?, published_at=COALESCE(?,published_at), updated_at=NOW() WHERE id=?');
+            $stmt->execute([$title, $summary, $content, $author, $image_url, $published ? date('Y-m-d H:i:s') : null, $id]);
             $success = 'Artikel erfolgreich aktualisiert';
         } else {
             // Insert
             $publishedAt = $published ? 'NOW()' : 'NULL';
-            $stmt = $pdo->prepare('INSERT INTO articles (title, summary, content, author, published_at) VALUES (?, ?, ?, ?, ' . $publishedAt . ')');
-            $stmt->execute([$title, $summary, $content, $author]);
+            $stmt = $pdo->prepare('INSERT INTO articles (title, summary, content, author, image_url, published_at) VALUES (?, ?, ?, ?, ?, ' . $publishedAt . ')');
+            $stmt->execute([$title, $summary, $content, $author, $image_url]);
             $success = 'Artikel erfolgreich erstellt';
         }
         // Redirect to clear form
         redirect('admin.php?success=' . urlencode($success));
-    } else {
+    } elseif (!isset($error)) {
         $error = 'Titel und Inhalt sind erforderlich';
     }
 }
 
 // Artikel veröffentlichen/entziehen
-if (isAdminFallback() && isset($_GET['toggle_publish'])) {
+if (isAdmin() && isset($_GET['toggle_publish'])) {
     $id = (int)$_GET['toggle_publish'];
     $stmt = $pdo->prepare('SELECT published_at FROM articles WHERE id = ?');
     $stmt->execute([$id]);
@@ -151,7 +190,7 @@ if (isAdminFallback() && isset($_GET['toggle_publish'])) {
 }
 
 // Artikel löschen
-if (isAdminFallback() && isset($_GET['delete'])) {
+if (isAdmin() && isset($_GET['delete'])) {
     $id = (int)$_GET['delete'];
     $stmt = $pdo->prepare('DELETE FROM articles WHERE id = ?');
     $stmt->execute([$id]);
@@ -160,7 +199,7 @@ if (isAdminFallback() && isset($_GET['delete'])) {
 
 // Artikel zum Bearbeiten laden
 $editArticle = null;
-if (isAdminFallback() && isset($_GET['edit'])) {
+if (isAdmin() && isset($_GET['edit'])) {
     $id = (int)$_GET['edit'];
     $stmt = $pdo->prepare('SELECT * FROM articles WHERE id = ?');
     $stmt->execute([$id]);
@@ -174,8 +213,8 @@ if (isset($_GET['success'])) {
 
 // Alle Artikel für Admin-Übersicht
 $articles = [];
-if (isAdminFallback()) {
-    $stmt = $pdo->query('SELECT id, title, author, published_at, created_at, updated_at FROM articles ORDER BY created_at DESC');
+if (isAdmin()) {
+    $stmt = $pdo->query('SELECT id, title, author, image_url, published_at, created_at, updated_at FROM articles ORDER BY created_at DESC');
     $articles = $stmt->fetchAll();
 }
 ?>
@@ -295,6 +334,35 @@ if (isAdminFallback()) {
             font-size: 16px;
             transition: all 0.3s ease;
             font-family: inherit;
+        }
+        
+        input[type="file"] {
+            padding: 12px 15px;
+            background: white;
+            cursor: pointer;
+        }
+        
+        .help-text {
+            font-size: 12px;
+            color: #7f8c8d;
+            margin-top: 5px;
+            display: block;
+        }
+        
+        .current-image {
+            margin-top: 10px;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border: 1px solid #e9ecef;
+        }
+        
+        .current-image p {
+            margin: 0 0 5px 0;
+            font-size: 12px;
+            color: #6c757d;
+            font-weight: 500;
+        }
         }
         
         input:focus, textarea:focus, select:focus {
@@ -790,7 +858,7 @@ if (isAdminFallback()) {
             <a href="/" class="logo"><?= h($config['site']['title']) ?> Admin</a>
             <nav>
                 <a href="/">Zur Website</a>
-                <?php if (isAdminFallback()): ?>
+                <?php if (isAdmin()): ?>
                     <a href="?logout=1">Logout</a>
                 <?php endif; ?>
             </nav>
@@ -810,21 +878,14 @@ if (isAdminFallback()) {
             <div class="alert alert-error"><?= $debug_info ?></div>
         <?php endif; ?>
 
-        <?php if (!isAdminFallback()): ?>
+        <?php if (!isAdmin()): ?>
             <div class="card login-form">
                 <h2>Admin Login</h2>
                 
-                <?php if (isset($session_disabled)): ?>
-                <div style="background: #fff3cd; padding: 15px; border-radius: 8px; margin-bottom: 20px; color: #856404; border: 1px solid #ffeaa7;">
-                    <strong>⚠️ Session-Problem erkannt!</strong><br>
-                    PHP Sessions sind auf diesem Server deaktiviert oder funktionieren nicht. 
-                    Das System verwendet jetzt Cookies als Fallback-Lösung.
-                </div>
-                <?php endif; ?>
-                
                 <div style="background: #e8f4fd; padding: 15px; border-radius: 8px; margin-bottom: 20px; font-size: 14px;">
-                    <strong>Login-Daten:</strong><br>
-                    Passwort: <code>admin123</code>
+                    <strong>🔐 Sicheres Login:</strong><br>
+                    Passwort: <code>admin123</code><br>
+                    <small style="color: #666;">Passwort ist jetzt sicher gehashed (.env.php)</small>
                 </div>
                 
                 <form method="post">
@@ -836,8 +897,7 @@ if (isAdminFallback()) {
                 </form>
                 
                 <div style="margin-top: 20px; font-size: 12px; color: #666;">
-                    <a href="?debug=1">Debug-Informationen anzeigen</a> | 
-                    <a href="cookie_login_test.php">Cookie-Test</a>
+                    <a href="?debug=1">Debug-Informationen anzeigen</a>
                 </div>
             </div>
         <?php else: ?>
@@ -864,6 +924,30 @@ if (isAdminFallback()) {
                 </div>
             </div>
 
+            <!-- Passwort ändern -->
+            <div class="card">
+                <h2>🔐 Passwort ändern</h2>
+                
+                <form method="post" style="max-width: 400px;">
+                    <div class="form-group">
+                        <label for="current_password">Aktuelles Passwort</label>
+                        <input type="password" id="current_password" name="current_password" required placeholder="Geben Sie Ihr aktuelles Passwort ein">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="new_password">Neues Passwort</label>
+                        <input type="password" id="new_password" name="new_password" required placeholder="Mindestens 6 Zeichen" minlength="6">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="confirm_password">Passwort bestätigen</label>
+                        <input type="password" id="confirm_password" name="confirm_password" required placeholder="Neues Passwort wiederholen">
+                    </div>
+                    
+                    <button type="submit" name="change_password" class="btn-secondary">Passwort ändern</button>
+                </form>
+            </div>
+
             <!-- Artikel Editor -->
             <div class="card">
                 <h2><?= $editArticle ? 'Artikel bearbeiten' : 'Neuer Artikel' ?></h2>
@@ -878,7 +962,7 @@ if (isAdminFallback()) {
                     <button type="button" onclick="previewArticle()" class="toolbar-btn preview-btn">Vorschau</button>
                 </div>
 
-                <form method="post" id="articleForm">
+                <form method="post" id="articleForm" enctype="multipart/form-data">
                     <?php if ($editArticle): ?>
                         <input type="hidden" name="id" value="<?= $editArticle['id'] ?>">
                     <?php endif; ?>
@@ -891,6 +975,20 @@ if (isAdminFallback()) {
                         <div class="form-group">
                             <label for="author">Autor</label>
                             <input type="text" id="author" name="author" value="<?= h($editArticle['author'] ?? 'Redaktion') ?>" placeholder="Name des Autors">
+                        </div>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="image">Artikel-Bild</label>
+                            <input type="file" id="image" name="image" accept="image/*" class="file-input">
+                            <small class="help-text">Erlaubte Formate: JPEG, PNG, GIF, WebP (max. 5MB)</small>
+                            <?php if ($editArticle && $editArticle['image_url']): ?>
+                                <div class="current-image">
+                                    <p>Aktuelles Bild:</p>
+                                    <img src="<?= h($editArticle['image_url']) ?>" alt="Aktuelles Bild" style="max-width: 200px; max-height: 150px; border-radius: 8px; margin-top: 5px;">
+                                </div>
+                            <?php endif; ?>
                         </div>
                     </div>
                     
